@@ -268,8 +268,9 @@ namespace LiveTuner
                     if (!string.IsNullOrEmpty(item))
                         _emoteMap[item] = (slot ?? "Expression", item);
                 }
-                File.WriteAllText(System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "emotes_dump.txt"), sb.ToString());
-                Log($"表情清单 {_emoteMap.Count} 条 → D:\\MDRG\\emotes_dump.txt");
+                var dumpPath = System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "emotes_dump.txt");
+                File.WriteAllText(dumpPath, sb.ToString());
+                Log($"表情清单 {_emoteMap.Count} 条 → {dumpPath}");
                 if (_emoteMap.Count > 0)
                     Log("可用 itemId 示例: " + string.Join(", ", _emoteMap.Keys.Take(12)));
             }

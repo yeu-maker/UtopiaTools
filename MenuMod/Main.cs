@@ -9,7 +9,7 @@ using MelonLoader;
 using HarmonyLib;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(MenuMod.Main), "Utopia Menu", "3.0.0", "UtopiaTools")]
+[assembly: MelonInfo(typeof(MenuMod.Main), "Utopia Menu", "3.1.0", "UtopiaTools")]
 [assembly: MelonGame("IncontinentCell", "My Dystopian Robot Girlfriend")]
 
 namespace MenuMod
@@ -39,8 +39,23 @@ namespace MenuMod
         public override void OnInitializeMelon()
         {
             LoadConfig();
-            Log("loaded v3.0 — F8 menu, lang=" + (_en ? "EN" : "ZH"));
+            Log("loaded v3.1 — F8 menu, lang=" + (_en ? "EN" : "ZH") + ", say scope gate ON");
             MelonCoroutines.Start(InitLoop());
+            MelonCoroutines.Start(StateProbe());
+        }
+
+        // 诊断：启动早期打两行当前游戏状态。
+        // 目的：日志里出现 state probe 说明「读状态」这条链路在原版游戏上也通；
+        // 若显示「未知」，就是游戏版本对不上，而不是门控写错了。
+        private static IEnumerator StateProbe()
+        {
+            var t0 = DateTime.UtcNow;
+            foreach (var sec in new[] { 5f, 20f })
+            {
+                while ((DateTime.UtcNow - t0).TotalSeconds < sec) yield return null;
+                Log("state probe @" + (int)sec + "s: " + (GetStateName() ?? "未知")
+                    + "  script=" + (GameScriptObj() != null ? "ok" : "null"));
+            }
         }
 
         private static void LoadConfig()
@@ -513,6 +528,12 @@ namespace MenuMod
         private static bool _chatReplace;
         private static bool _sayReplace;
         private static readonly string SAY_CFG = System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "say_override.txt");
+        private static readonly string SAY_SCOPE_CFG = System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "say_scope.txt");
+        // 只有这些游戏状态里才替换对话（默认：房间 + 房间内互动）
+        private static HashSet<string> _sayScope = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "RoomState", "InteractState" };
+        private static bool _sayScopeAll;
+        private static string _sayLogKey;
+        private static readonly System.Random _rng = new System.Random();
         private static readonly string REPLACE_CFG = System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "chat_override.txt");
         private static DateTime _lastChat = DateTime.MinValue;
         private static readonly string CHAT_FILE = System.IO.Path.Combine(MelonLoader.Utils.MelonEnvironment.GameRootDirectory, "chat.txt");
@@ -536,6 +557,14 @@ namespace MenuMod
             Make("utopia_menu.txt", "lang=zh\npanelx=520\npanely=140\n");
             Make("chat_override.txt", "off\n");
             Make("say_override.txt", "off\n");
+            Make("say_scope.txt",
+                "# say.txt 只在这些游戏状态下生效，其余场景一律保留原版台词。\n" +
+                "#   room        = 房间 + 房间内互动（推荐，默认）\n" +
+                "#   room+       = 再加上 抱抱 / 换衣间\n" +
+                "#   room+story  = 再加上 剧情对话\n" +
+                "#   all         = 全部状态（旧行为，会顶掉人格模块的色色台词）\n" +
+                "# 也可以直接写状态名，逗号分隔，例如：RoomState,InteractState\n" +
+                "room\n");
         }
 
         private static string GameVersion()
@@ -746,22 +775,37 @@ namespace MenuMod
 
         private void ShowSayCtrl()
         {
-            ShowMenu(L("对话替换", "Dialogue replace"),
-                     _sayReplace ? L("当前：开（她说的话全来自 say.txt）", "ON: all her lines come from say.txt")
-                                 : L("当前：关（原版对话）", "OFF: vanilla dialogue"),
+            LoadSayScopeCfg();
+            var state = GetStateName() ?? "?";
+            var head = (_sayReplace ? L("当前：开", "ON") : L("当前：关", "OFF"))
+                     + "  " + L("状态", "state") + "=" + state
+                     + "  " + L("范围", "scope") + "=" + ScopeLabel();
+            ShowMenu(L("对话替换", "Dialogue replace"), head,
                      new List<(string, Action)>
             {
                 (L("开启替换", "Turn ON"), (Action)(() => SetSayReplace(true))),
                 (L("关闭替换", "Turn OFF"), (Action)(() => SetSayReplace(false))),
+                (L("范围：房间（推荐）", "Scope: room"), (Action)(() => SetScopePreset("room"))),
+                (L("范围：房间+抱抱/换衣", "Scope: room+"), (Action)(() => SetScopePreset("room+"))),
+                (L("范围：房间+剧情", "Scope: room+story"), (Action)(() => SetScopePreset("room+story"))),
+                (L("范围：全部（会顶掉色色台词）", "Scope: all"), (Action)(() => SetScopePreset("all"))),
                 (L("返回", "Back"), (Action)(() => Defer(ShowMore))),
             });
+        }
+
+        private static void SetScopePreset(string preset)
+        {
+            try { File.WriteAllText(SAY_SCOPE_CFG, preset + "\n"); } catch { }
+            _sayLogKey = null;
+            LoadSayScopeCfg();
         }
 
         private static void SetSayReplace(bool on)
         {
             _sayReplace = on;
+            _sayLogKey = null;
             try { File.WriteAllText(SAY_CFG, on ? "on" : "off"); } catch { }
-            Log("say replace " + (on ? "ON" : "OFF"));
+            Log("say replace " + (on ? "ON" : "OFF") + "  scope=" + ScopeLabel());
         }
 
         private static void LoadSayReplaceCfg()
@@ -792,6 +836,7 @@ namespace MenuMod
             try
             {
                 LoadSayReplaceCfg();
+                LoadSayScopeCfg();
                 var sayType = FindFungusType("SayDialog");
                 if (sayType == null) { Warn("no SayDialog type"); return; }
 
@@ -810,11 +855,182 @@ namespace MenuMod
             catch (Exception e) { Warn("say patch failed: " + (e.InnerException ?? e).Message); }
         }
 
+        // ---- 当前游戏状态（GameScript.GameState → 类型名，例如 "RoomState" / "NewFrickState"）----
+        private static object _gameScriptCached;
+        private static bool _gsTried;
+        private static DateTime _gsLastTry = DateTime.MinValue;
+
+        private static object GameScriptObj()
+        {
+            if (_script != null) return _script;
+            if (_gameScriptCached != null) return _gameScriptCached;
+            // 找不到时别每句台词都去全网反射（很贵）：最多每 2 秒重试一次
+            if (_gsTried && (DateTime.UtcNow - _gsLastTry).TotalSeconds < 2.0) return null;
+            _gsTried = true;
+            _gsLastTry = DateTime.UtcNow;
+            try
+            {
+                var t = FindType("GameScript");
+                if (t != null)
+                {
+                    _gameScriptCached = FindUnityObject(t) ?? GetStatic(t, "Instance", "instance", "_instance");
+                }
+            }
+            catch { }
+            return _gameScriptCached;
+        }
+
+        private static string GetStateName()
+        {
+            try
+            {
+                var st = GetMember(GameScriptObj(), "GameState");
+                if (st == null)
+                {
+                    var t = GameScriptObj() != null ? GameScriptObj().GetType() : FindType("GameScript");
+                    if (t != null)
+                    {
+                        var inst = GetStatic(t, "Instance", "instance", "_instance");
+                        st = GetMember(inst, "GameState");
+                    }
+                }
+                if (st == null) return null;
+
+                var real = RealClassName(st);          // 真实类名：RoomState / NewFrickState …
+                if (!string.IsNullOrEmpty(real)) return real;
+                return st.GetType().Name;              // 兜底（可能只拿到基类名 "GameState"）
+            }
+            catch { }
+            return null;
+        }
+
+        // Il2CppInterop 按【方法声明的返回类型】包装对象，所以 GameState 属性永远返回 `GameState` 包装，
+        // GetType().Name 拿不到派生类。必须问 il2cpp 要对象真实类指针里的类名。
+        private static string RealClassName(object o)
+        {
+            try
+            {
+                var b = o as Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase;
+                if (b == null) return null;
+                var cls = Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(b.Pointer);
+                if (cls == IntPtr.Zero) return null;
+
+                try
+                {
+                    var name = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_name_(cls);
+                    if (!string.IsNullOrEmpty(name)) return name;
+                }
+                catch { }
+
+                var p = Il2CppInterop.Runtime.IL2CPP.il2cpp_class_get_name(cls);
+                if (p != IntPtr.Zero) return System.Runtime.InteropServices.Marshal.PtrToStringAnsi(p);
+            }
+            catch { }
+            return null;
+        }
+
+        private static void LoadSayScopeCfg()
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool all = false;
+            string src = "内置默认";
+            try
+            {
+                if (File.Exists(SAY_SCOPE_CFG))
+                {
+                    src = "say_scope.txt";
+                    foreach (var raw in File.ReadAllLines(SAY_SCOPE_CFG))
+                    {
+                        var s = raw.Trim();
+                        if (s.Length == 0 || s.StartsWith("#")) continue;
+                        foreach (var part in s.Split(','))
+                        {
+                            var p = part.Trim();
+                            if (p.Length == 0) continue;
+                            var low = p.ToLowerInvariant();
+                            if (low == "all" || low == "*")
+                            {
+                                all = true;
+                            }
+                            else if (low == "room")
+                            {
+                                set.Add("RoomState"); set.Add("InteractState");
+                            }
+                            else if (low == "room+")
+                            {
+                                set.Add("RoomState"); set.Add("InteractState");
+                                set.Add("CuddleState"); set.Add("ChangingRoomState");
+                            }
+                            else if (low == "room+story")
+                            {
+                                set.Add("RoomState"); set.Add("InteractState");
+                                set.Add("StoryState");
+                            }
+                            else
+                            {
+                                set.Add(p);   // 直接写状态名
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e) { Warn("read say_scope failed: " + e.Message); }
+
+            if (set.Count == 0 && !all) { set.Add("RoomState"); set.Add("InteractState"); }
+            _sayScope = set;
+            _sayScopeAll = all;
+            Log("say scope = " + ScopeLabel() + " (" + src + ")");
+        }
+
+        private static string ScopeLabel()
+        {
+            if (_sayScopeAll) return "ALL";
+            try { return string.Join(",", _sayScope.OrderBy(x => x).ToArray()); }
+            catch { return "?"; }
+        }
+
+        // 状态名容错：运行时类型名可能是 RoomState / GameScript_RoomState / GameScript.RoomState，
+        // 三种都认，免得白名单写对了却被类型名写法坑掉。
+        private static bool IsStateAllowed(string state)
+        {
+            if (string.IsNullOrEmpty(state)) return false;
+            if (_sayScopeAll) return true;
+            foreach (var sc in _sayScope)
+            {
+                if (state.Equals(sc, StringComparison.OrdinalIgnoreCase)) return true;
+                if (state.EndsWith("_" + sc, StringComparison.OrdinalIgnoreCase)) return true;
+                if (state.EndsWith("/" + sc, StringComparison.OrdinalIgnoreCase)) return true;
+                if (state.EndsWith("." + sc, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
         private static void SayPrefix(ref string __0)
         {
             try
             {
                 if (!_sayReplace) return;
+
+                var state = GetStateName();
+                if (state == null)
+                {
+                    if (_sayLogKey != "nostate")
+                    {
+                        _sayLogKey = "nostate";
+                        Warn("SAY: 读不到 GameScript.GameState，为避免顶掉别人台词，这次不替换");
+                    }
+                    return;
+                }
+
+                bool allow = IsStateAllowed(state);
+                var key = state + (allow ? "+" : "-");
+                if (_sayLogKey != key)
+                {
+                    _sayLogKey = key;
+                    Log("SAY state=" + state + (allow ? " -> 替换" : " -> 跳过（保留原版/其他人格模组台词）"));
+                }
+                if (!allow) return;
+
                 var line = PickSayLine();
                 if (!string.IsNullOrEmpty(line)) __0 = line;
             }
@@ -829,7 +1045,7 @@ namespace MenuMod
                 var lines = File.ReadAllLines(SAY_FILE).Select(l => l.Trim())
                     .Where(l => l.Length > 0 && !l.StartsWith("#")).ToList();
                 if (lines.Count == 0) return null;
-                return lines[new System.Random().Next(lines.Count)];
+                return lines[_rng.Next(lines.Count)];
             }
             catch { return null; }
         }
