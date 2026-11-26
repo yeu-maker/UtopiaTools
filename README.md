@@ -1,5 +1,15 @@
 # Utopia Tools
 
+> ### ⚠️ Downloaded the "Source code" zip? It will NOT work.
+> This repository is **source code** — it has to be compiled before the game can load it.
+> If you just want to use the mod, grab the release archive:
+>
+> **[UtopiaTools.zip](https://github.com/yeu-maker/UtopiaTools/releases/latest/download/UtopiaTools.zip)** ·
+> [all releases](https://github.com/yeu-maker/UtopiaTools/releases/latest)
+>
+> You will know you got the wrong file if the folder is named `UtopiaTools-main` and contains
+> `ControlPanel/ libs/ LiveTuner/ MenuMod/ README.md` instead of `Mods/*.dll`.
+
 A quality-of-life / sandbox menu mod for **My Dystopian Robot Girlfriend 0.97.12** (PC).
 
 ## Features
@@ -22,8 +32,33 @@ A quality-of-life / sandbox menu mod for **My Dystopian Robot Girlfriend 0.97.12
 ## Install (players)
 
 1. Install MelonLoader 0.7.3 into the game folder
-2. Copy the `Mods` folder from the release archive into the game root
+2. Download the release archive (`UtopiaTools.zip`), open it and copy the **three DLLs**
+   from its `Mods` folder into `<GameDir>/Mods/`
 3. Launch the game, load a save, press `F8` / `F9`
+
+The result must look like this — the DLLs sit **directly** in `Mods`, no subfolder:
+
+```
+<GameDir>/
+  My Dystopian Robot Girlfriend.exe
+  Mods/
+    MenuMod.dll
+    ControlPanel.dll
+    LiveTuner.dll
+  MelonLoader/
+    Latest.log          <- search for [MENU] to verify
+```
+
+Verify from the log (`<GameDir>/MelonLoader/Latest.log`):
+
+```
+[MENU] loaded v3.1 — F8 menu, lang=EN, say scope gate ON
+[MENU] ready
+[MENU] say patched: Say(String,Boolean,Boolean,Boolean,Boolean,Action)
+```
+
+If those lines are missing, MelonLoader did not load the DLLs (wrong folder, wrong game
+path, or MelonLoader not installed).
 
 ## Dialogue replacement scope (`say_scope.txt`)
 
